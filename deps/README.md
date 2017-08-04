@@ -1,5 +1,5 @@
 
 This directory should contain these projects:
 
-* websocket-cpp  : https://github.com/luzhlon/websocket-cpp
-* xval           : https://github.com/luzhlon/xval
+* tstream : https://github.com/luzhlon/tstream
+* xval    : https://github.com/luzhlon/xval
