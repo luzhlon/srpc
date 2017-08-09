@@ -2,7 +2,7 @@
 #define __SRPC_H__
 
 #include <mutex>
-#include "../deps/tstream/src/tstream.hpp"
+#include "tstream.hpp"
 
 #include "xval.h"
 #include "xval_val.h"
@@ -108,7 +108,7 @@ namespace srpc {
         Value _pack = List::New(8);     // pack's buffer of list
         Value _attr = Dict::New(0);     // session's attributes
         msg_t _type;
-        bool _returned;
+        bool _returned = false;
         bool _isnotify;
         bool _closed = false;
 

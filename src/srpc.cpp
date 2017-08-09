@@ -20,12 +20,13 @@ namespace srpc {
         // call the function
         auto func = getfunc(funid);
         if (func) {
-            _returned = false;
             Value args, nil;
             args = Tuple::New(pack.begin() + 2, pack.size() - 2);
             func(*this, args.tuple());
             // ensure return
             retn(nil);
+            // reset, for next return
+            _returned = false;
         } else if (t == MSG_CALL) {
             return except(ERR_NO_FUNC);
         }
@@ -56,7 +57,6 @@ namespace srpc {
     void Session::retn(const Value *data, size_t count) {
         if (_returned || _isnotify)
             return;
-        _returned = true;
         _mutex.lock();
         auto& pack = _pack.list();
         pack.resize(1);
@@ -65,6 +65,7 @@ namespace srpc {
             pack.append(*data++);
         send_pack();
         _mutex.unlock();
+        _returned = true;
     }
 
     void Session::except(err_code err) {

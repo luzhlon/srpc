@@ -18,4 +18,6 @@ target 'srpc'
 
     if is_mode 'debug' then
         add_cxxflags '/MDd'
+    else
+        add_cxxflags '/MD'
     end
