@@ -18,15 +18,16 @@ namespace srpc {
 
     enum msg_t {
         MSG_INVALID = 0,
-        MSG_CALL,
-        MSG_NOTIFY,
-        MSG_RETURN,
-        MSG_EXCEPT,
-        MSG_CLOSE
-    };
+        // Base type
+        MSG_INVOKE = 0x10,
+        MSG_RETURN = 0x20,
+        // Concrete type
+        MSG_CALL = MSG_INVOKE | 0x00,
+        MSG_NOTIFY = MSG_INVOKE | 0x01,
+        MSG_CLOSE = MSG_INVOKE | 0x02,
 
-    enum err_code {
-        ERR_NO_FUNC
+        MSG_NOFUNC = MSG_RETURN | 0x00,
+        MSG_RETVAL = MSG_RETURN | 0x01,
     };
 
     typedef void (*Function)(Session& h, Tuple& args);
@@ -38,10 +39,7 @@ namespace srpc {
         Session() {}
         Session(tstream&& ts) : _ts(std::move(ts)) {}
 
-        Session& operator=(tstream&& ts) {
-            _ts = std::move(ts);
-            return *this;
-        }
+        Session& operator=(tstream&& ts);
 
         void setAttr(const Value& k, const Value& v) {
             _attr.dict().set(k, v);
@@ -63,7 +61,7 @@ namespace srpc {
             return call(func, args.begin(), args.size());
         }
         // send a pack 'return'
-        void retn(const Value *data, size_t count);
+        void retn(const Value *data, size_t count, msg_t t = MSG_RETVAL);
         void retn(initializer_list<Value> args) {
             return retn(args.begin(), args.size());
         }
@@ -75,7 +73,12 @@ namespace srpc {
             return invoke(func, &args, 1, true);
         }
         // send a pack 'except'
-        void except(err_code err);
+        void except();
+        // send a pack 'close'
+        void close();
+
+        inline bool isclosed() { return _closed; }
+        inline bool isopened() { return !_closed; }
 
         void addfunc(const Value& fid, Function f) {
             _funs.set(fid, (void*)f);
@@ -98,18 +101,16 @@ namespace srpc {
         bool send_pack();
         bool recv_pack();
 
-        inline msg_t type() { return _type; }
-        inline bool typeis(msg_t t) {
-            return type() == t;
+        inline msg_t type() { 
+            return (msg_t)_pack.list()[0].Int(0);
         }
 
         recursive_mutex _mutex;
         Value _funs = Dict::New(8);
         Value _pack = List::New(8);     // pack's buffer of list
         Value _attr = Dict::New(0);     // session's attributes
-        msg_t _type;
         bool _returned = false;
-        bool _isnotify;
+        bool _isnotify = false;
         bool _closed = false;
 
     protected:

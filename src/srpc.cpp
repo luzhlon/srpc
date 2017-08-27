@@ -9,26 +9,38 @@ using namespace xval;
 
 namespace srpc {
 
+    Session& Session::operator=(tstream&& ts) {
+        _ts = std::move(ts);
+        _closed = false;
+        return *this;
+    }
+
+    inline msg_t basic(msg_t t) { return (msg_t)((uint32_t)t & 0xF0); }
+
     void Session::handle_invoke() {
         // check the type
         auto t = type();
-        _isnotify = MSG_NOTIFY == t;
-        assert(MSG_CALL == t || _isnotify);
-        // get the function to invoke
-        auto& pack = _pack.list();
-        auto funid = pack[1];       // function id
-        // call the function
-        auto func = getfunc(funid);
-        if (func) {
-            Value args, nil;
-            args = Tuple::New(pack.begin() + 2, pack.size() - 2);
-            func(*this, args.tuple());
-            // ensure return
-            retn(nil);
-            // reset, for next return
-            _returned = false;
-        } else if (t == MSG_CALL) {
-            return except(ERR_NO_FUNC);
+        assert(basic(t) == MSG_INVOKE);
+        if (t == MSG_CLOSE)
+            _closed = true;
+        else {
+            // get the function to invoke
+            auto& pack = _pack.list();
+            auto fid = pack[1];       // function id
+            // call the function
+            auto func = getfunc(fid);
+            if (func) {
+                Value args, nil;
+                args = Tuple::New(pack.begin() + 2, pack.size() - 2);
+                // store the original value of thus tow variable
+                auto isnotify = _isnotify, returned = _returned;
+                _isnotify = MSG_NOTIFY == t, _returned = false;
+                func(*this, args.tuple());  // call the rpc function
+                retn(nil);                  // ensure return
+                // restore the original value of thus tow variable
+                _isnotify = isnotify, _returned = returned;
+            } else if (t == MSG_CALL)
+                retn(nullptr, 0, MSG_NOFUNC);
         }
     }
 
@@ -54,13 +66,13 @@ namespace srpc {
         return Value();
     }
 
-    void Session::retn(const Value *data, size_t count) {
+    void Session::retn(const Value *data, size_t count, msg_t t) {
         if (_returned || _isnotify)
             return;
         _mutex.lock();
         auto& pack = _pack.list();
         pack.resize(1);
-        pack.set(0, (int64_t)MSG_RETURN);
+        pack.set(0, (uint64_t)t);
         while (count--)
             pack.append(*data++);
         send_pack();
@@ -68,49 +80,49 @@ namespace srpc {
         _returned = true;
     }
 
-    void Session::except(err_code err) {
+    void Session::close() {
         auto& pack = _pack.list();
         _mutex.lock();
-        pack.resize(2);
-        pack.set(0, (int64_t)MSG_EXCEPT);
-        pack.set(1, (int64_t)err);
+        pack.resize(1);
+        pack.set(0, (int64_t)MSG_CLOSE);
         send_pack();
-        _mutex.lock();
+        _mutex.unlock();
+        _closed = true;
+        _ts.close();
     }
 
     Value Session::wait_return() {
-        do {
-            if (!recv_pack()) break;
-            if (typeis(MSG_RETURN)) {
-                auto& pack = _pack.list();
-                auto data = pack[1];
-                if (pack.size() > 2)
-                    data = Tuple::New(pack.begin() + 1, pack.size() - 1);
-                return data;
-            } else {
+        Value data;
+        while (recv_pack()) {
+            auto t = type();
+            if (basic(t) == MSG_INVOKE)
                 handle_invoke();
+            else if (t == MSG_RETVAL) {
+                auto& pack = _pack.list();
+                data = pack.size() > 2 ?
+                    Tuple::New(pack.begin() + 1, pack.size() - 1): pack[1];
+                break;
+            } else if (t == MSG_NOFUNC) {
+                // error handle
+                break;
             }
-        } while (true);
-        return Value();
+        }
+        return data;
     }
 
     bool Session::send_pack() {
-        if (_closed) return false;
+        if (isclosed()) return false;
         return mp_pack(_pack, _ts);
     }
 
     bool Session::recv_pack() {
-        auto s = mp_unpack(_pack, _ts);
-        if (!s) return false;
-        _type = (msg_t)_pack.list()[0].Int(0);
-        if (type() == MSG_CLOSE)
-            _closed = true;
-        return true;
+        if (isclosed()) return false;
+        return mp_unpack(_pack, _ts);
     }
 
     void Session::run() {
         if (onopen) onopen(*this);
-        while (recv_pack())
+        while (recv_pack() && isopened())
             handle_invoke();
         if (onclose) onclose(*this, !_closed);
     }
